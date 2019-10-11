@@ -1,0 +1,346 @@
+---
+title: "Google Trends e Desemprego"
+author: "Talitha Speranza"
+date: "5 de Junho de 2018"
+output:
+  html_document:
+    theme: journal
+    highlight: default
+    css: style.css
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+---
+
+<style>
+p.caption {
+  font-size: 0.8em;
+  font-style: italic;
+  font-weight: bold;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = F, message = F, fig.align="center")
+source("api.R")
+```
+
+## Introdução
+
+O uso de dados de ferramentas de busca tem um potencial bastante elevado para orientar e aprimorar políticas públicas. Esta afirmação se baseia em quatro fatos sobre a natureza destes dados. Primeiro, a frequência com que podemos obtê-los é limitada somente pelo poder computacional de que se dispõe: em teoria, qualquer granularidade é possível - mensal, semanal, diária, horária, de minuto a minuto ou até a frações de minutos. Esta já é uma vantagem evidente em relação ao que existe hoje, pois a maioria das variáveis sócio-econômicas só estão disponíveis em frequências superiores à semanal.
+
+Em segundo lugar, o custo de extrair informação é muito baixo em comparação aos das laboriosas pesquisas conduzidas por institutos de estatísticas públicas ao redor do mundo. Os censos produzidos a cada dez anos pelo IBGE são exemplos deste tipo de trabalho de alto custo. A abrangência populacional dos dados dos censos é, obviamente, muito maior que a de dados de redes sociais. Porém, o número de usuários destes espaços virtuais, sempre crescente, já os torna potencialmente mais férteis que amostras usuais. Na Pesquisa Nacional por Amostra de Domicílios (PNAD), por exemplo, a amostra do IBGE é de cerca de 360 mil pessoas, enquanto que a metade da população brasileira tem contas no Facebook.
+
+## Motivação 
+
+Neste projeto, pretendemos desenvolver indicadores para o mercado de trabalho brasileiro. Nossa intenção é, principalmente, superar a baixa frequência com que o IBGE libera os dados relacionados ao tema. As medidas oficiais de emprego no Brasil são divulgadas cerca de 1 mês depois da data de referência. Se as entidades governamentais antecipassem estas variáveis com mais rapidez, poderiam responder com eficácia ampliada. 
+
+Um conhecimento extra pode, ainda, ser proporcionado por estes dados ao separá-los por diferentes regiões ou estados da federação. Com essa informação, o governo poderia desenhar soluções voltadas para localidades específicas, antes que o problema se agrave e a baixo custo. Atualmente, a PNAD só pode ser desagregada desta forma em sua divulgação trimestral (portanto, com grande atraso) e há pouquíssimas observações disponíveis: a pesquisa, tal como é hoje, só começou em 2012.
+
+Logo, nosso objetivo é criar modelos que gerem sinais confiáveis das condições do mercado de trabalho brasileiro em tempo real, antes que as estatísticas oficiais estejam disponíveis. Os brasileiros só teriam a ganhar. 
+
+## Ferramentas
+
+Inicialmente, diversas redes sociais foram cogitadas como fontes de dados. Entretanto, uma a uma, as APIs associadas a elas foram descartadas. 
+
+### Google Trends
+
+O Google Trends é uma ferramenta do Google que mostra a popularidade dos termos buscados em um passado recente, por língua e localidade geográfica. Sua API é pública e gratuita.
+
+![Áreas principais do site do Google Trends](gtrends_main.png)
+
+![Volume de buscas por região apresentado pelo Google Trends](gtrends_regions.png)
+
+![Termos relacionados encontrados automaticamente pelo Google Trends](gtrends_related.png) 
+
+### Pacote R gtrendsR
+
+O pacote gtrendsR para R é uma interface para recuperar e exibir as informações retornadas *online* pelo Google Trends. É possível, inclusive, representar os dados geograficamente em mapas. 
+
+Volume de buscas pelo termo *emprego* originadas no Rio de Janeiro, desde 2004:
+
+```{r}
+results <- gtrendsR::gtrends(keyword = "emprego", "BR-RJ", time = "all")
+head(results$interest_over_time,10)
+head(results$related_queries)
+```
+
+Volume de buscas por termos classificados pelo Google na categoria *Jobs*, por todo o Brasil, desde 2004:
+
+```{r}
+results <- gtrendsR::gtrends(geo = "BR", time = "all", category = 60)
+head(results$interest_over_time,10)
+head(results$related_queries,10)
+```
+
+Volume de buscas pelo termo *vagas de emprego* originadas na região Sudeste do Brasil, desde 2004:
+
+```{r}
+results <- gtrendsR::gtrends(keyword = "vagas de emprego", geo = c("BR-RJ","BR-MG","BR-SP","BR-ES"), time = "all")
+head(results$interest_over_time,10)
+head(results$related_queries)
+```
+
+## Banco de Dados e API
+
+### Geração de Termos de Busca
+
+Além das categorias fornecidas pelo Google, foram gerados termos de busca independentes, baseados em combinações de palavras relacionadas a emprego. 
+
+```{r echo = F}
+require(kableExtra)
+rules1 <- read.csv("rule1_set1.csv", header = F, encoding = "latin1", stringsAsFactors = F)
+kableExtra::kable(rules1, col.names = c("1a palavra", "2a palavra","3a palavra", "4a palavra"), caption = "Tabela para gerar o primeiro conjunto de termos relacionados à procura por emprego") %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+```{r echo = F}
+rules2 <- read.csv("rule1_set2.csv", header = F, encoding = "latin1", stringsAsFactors = F)
+kableExtra::kable(rules2, col.names = c("1a palavra", "2a palavra"), caption = "Tabela para gerar o segundo conjunto de termos relacionados à procura por emprego") %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+```{r echo = F}
+terms <- read.csv("terms_rule1.csv", header = F, encoding = "latin1", stringsAsFactors = F)
+inx <- sample(1:nrow(terms), 10)
+kableExtra::kable(terms[inx,1], col.names = NULL, caption = "Exemplos de termos gerados", encoding = "latin1") %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+### Base no MySQL
+
+Para facilitar o manuseio das séries recolhidas e assegurar sua persistência e integridade, uma base de dados foi montada em um sistema gerenciador de banco de dados. O sistema escolhido foi o MySQL, com o qual a equipe já contava com experiência prévia. 
+
+A base comporta tanto as séries extraídas do Google Trends quanto as calculadas pelo IBGE (PNAD e PME).
+
+![Diagrama entidade-relacionamento (ER) da base no MySQL](database.png){ width=70% } 
+
+### API Própria em R
+
+Uma pequena API em R feita sob medida para a base de dados no MySQL facilita e garante a reprodutibilidade das análises conduzidas. 
+
+```{r eval = F}
+# Conecta com a base
+# @return O objeto serve de input para todas as outras funções
+connect()
+```
+
+```{r eval = F}
+# Desconecta da base
+# @param O objeto retornado pela função connect
+disconnect(conn) 
+```
+
+```{r eval = F}
+# @return Lista de séries do GTrends para determinado tipo de termo e localidade 
+# @param type.id - Identificador do tipo de termo (ver funçãoo get.types)
+# @param location.id - Identificador da localidade (ver função get.locations)
+# @param data.frame - A saída deve ser um data frame ou um objeto ts? 
+get.series(conn, type.id, location.id, data.frame = F)
+```
+
+```{r eval = F}
+# @return Identificadores unicos das séries de emprego do IBGE
+# Exemplos: Taxa de Desocupação, PEA, PIA, PO
+get.ibge.types(conn)
+```
+
+```{r eval = F}
+# @return Série da PNAD
+# @param location.id - Identificador da localidade (ver função get.locations)
+# @param type - "m" = mensal, "t" = trimestral
+# @param ibge.id - Identificador da serie
+get.pnad(conn, location.id = 0, type = "m", ibge.id = 3)
+```
+
+```{r eval = F}
+# @return Série da PME
+# @param location.id - Identificador da localidade (ver função get.locations)
+# @param pnad.id - Identificador da serie
+# @note Por enquanto, só há series para o Brasil (location.id = 0)
+get.pme(conn, location.id = 0, ibge.id = 3)
+```
+
+```{r eval = F}
+# @return Série trimestral construída a partir da série mensal, tomando a média de cada trimestre.
+# @param series - Série mensal a ser transformada
+quarterly(series)
+```
+
+```{r eval=F}
+# @return Série em log retorno
+# @param series - Série a ser transformada
+log.ret(series)
+```
+
+```{r eval=F}
+# @return Série em média movel trimestral
+# @param series - Série a ser transformada
+ma3(series)
+```
+
+```{r eval=F}
+# Faz um gráfico padrão mostrando duas séries: uma do Google Trends e outra do IBGE
+# @param google - Série do Google Trends
+# @param ibge - Série do IBGE
+# @param title - Titulo do gráfico
+# @param lbls - Nomes da séries 
+# @param corr - Mostrar correlação? 
+# @param ylim - Limites para o eixo y da série do Google
+# @param y2 - Fazer em dois eixos?
+# @param sec.ylab - O segundo eixo deve ter identificação?
+plot.gt(google, ibge, lbls = c("Google","IBGE"), title = "", corr = T, ylim = NULL, y2 = T, sec.ylab = T)
+```
+
+```{r eval=F}
+# @return Correlação entre duas séries
+# @param series1 - Primeira série 
+# @param series2 - Segunda série
+get.corr(series1, series2)
+```
+
+```{r eval=F}
+# @return Série sem outliers
+# @param series - Série da qual se deseja remover outliers
+# @param n - Quantos outliers devem ser removidos
+# @param FUNC - Função que calcula o valor que entra no lugar de cada outlier. 
+#               A única entrada dessa função deve ser a série.
+rem.outliers(series, n = 1, FUNC = mean)
+```
+
+## Análise Preliminar dos Dados
+ 
+### Formato dos Dados
+
+Os dados fornecidos pela API do Google Trends são mensais e padronizados dentro da janela temporal requisitada, em uma escala de 0 a 100. O valor máximo da janela é divulgado como 100 e o restante é calculado por proporção simples. No manual de ajuda da referida API [^1], encontra-se a seguinte descrição do ajuste dos dados:
+
+> Each data point is divided by the total searches of the geography and time range it represents to compare relative popularity. Otherwise, places with the most search volume would always be ranked highest. The resulting numbers are then scaled on a range of 0 to 100 based on a topic’s proportion to all searches on all topics. Different regions that show the same number of searches for a term don't always have the same total search volumes.
+
+Se, por exemplo, o usuário solicita o observações de janeiro de 2017 a março de 2017 e recebe a série $s = \{50, 100, 25\}$, então o volume de buscas em fevereiro foi o mais alto, representando o dobro do volume de janeiro e o quádruplo do volume de março. Não é possível extrair desta série quais foram as proporções verdadeiras, isto é, o número de buscas por um determinado termo na localidade e no período desejados dividido pelo número total de buscas na mesma localidade e período. 
+
+A princípio, pensou-se que esta forma de divulgar os dados prejudicasse qualquer tipo de análise continuada, pois todos os valores das séries podem mudar quando um novo dado é adicionado, bastando que ele seja o valor máximo do período. No entanto, essa dificuldade pode ser contornada se as observações forem transformadas em variações mensais. Uma demonstração simples deste fato é desenvolvida a seguir.
+
+Suponha que a série de que o Google dispõe, mas não divulga, seja $G = \{g_{t-3}, g_{t-2}, g_{t-1}\}$ no mês $t$. Os valores de $G$ são proporções entre o número de buscas por um termo de interesse e o total de buscas, por quaisquer termos, em uma dada região durante os meses $t-3$ a $t-1$. Seja a série transformada e divulgada pelo Google $T(G) = \{T(g_{t-3}), T(g_{t-2}), T(g_{t-1})\}$. Se $max(G) = g_{t-2}$, então $T(g_{t-2}) = 100$ e, por regra de três, $T(g_{t-1}) = 100\cdot g_{t-1}/g_{t-2}$ e $T(g_{t-3}) = 100\cdot g_{t-3}/g_{t-2}$.
+
+A variação percentual mensal pode ser calculada por uma função bivariada $f$ tal que $f(x,y) = (y-x)/x$, onde $x$ é a observação mais antiga e $y$, a mais atual. Então,
+
+$f(g_{t-3}, g_{t-2}) = f(T(g_{t-3}),T(g_{t-2})) = (g_{t-2} - g_{t-3})/g_{t-3}$
+$f(g_{t-2}, g_{t-1}) = f(T(g_{t-2}),T(g_{t-1})) = (g_{t-1} - g_{t-2})/g_{t-2}$
+
+No mês $t+1$, um novo dado é adicionado a $G$, de modo que $G = \{g_{t-3}, g_{t-2}, g_{t-1}, g_t\}$. Se $max(G) = g_t$, então a transformação de $G$ deve ser recalculada:
+
+$T'(G) = \{100\cdot g_{t-3}/g_{t}, 100\cdot g_{t-2}/g_{t}, 100\cdot g_{t-1}/g_{t}, 100\}$
+
+Felizmente, $T'$ não modifica os resultados de f:
+
+$f(g_{t-3}, g_{t-2}) = f(T'(g_{t-3}),T'(g_{t-2})) = (100\cdot g_{t-2}/g_{t} - 100\cdot g_{t-3}/g_{t})/100\cdot g_{t-3}/g_{t} = (g_{t-2} - g_{t-3})/g_{t-3}$
+
+Portanto, a aplicação da variação percentual mensal gera uma série consistente. Mas isso requer que mais um cuidado seja tomado. É preciso que as séries do IBGE (da PNAD e da PME) sejam transformadas para que seus movimentos tenham o mesmo fundamento suposto para a trajetória das séries do Google. Em sua forma original, não divulgada, as séries do Google contêm porcentagens. A forma escalonada entre 0 e 100 é apenas uma representação inteira dessas porcentagens. Então, quando a variação percentual mensal é calculada em cima das séries divulgadas pelo Google, os valores resultantes serão variações percentuais de porcentagens. 
+
+Por exemplo, se em um mês a busca pelo termo *emprego* for feita 50 vezes em meio a um total de 1000 buscas por quaisquer outros termos neste mesmo mês e no próximo, a porcentagem será de $(50/1000)\cdot100 = 0.5\%$. Se, no mês seguinte, a mesma busca for feita 25 vezes, a porcentagem será de $(25/1000)\cdot 100 = 0.25\%$. O Google divulgaria os dados 100 e 50, ao invés de 0.5 e 0.25, respectivamente. De todos os modos, a variação percentual mensal seria $(0.25 - 0.5)/0.5 = (50 - 100)/100 = -0.5 = -50\%$.  
+
+Se a premissa é de que a proporção de buscas pelo termo *emprego* está positivamente correlacionada à taxa de desocupação, a mesma transformação em variação percentual mensal deve ser aplicada neste caso, pois só assim a comparação com as séries do Google será válida. No exemplo anterior, o volume de buscas diminuiu em $0.5 - 0.25 = 0.25$ pontos percentuais. Entretanto, essa informação não estaria disponível. Só seria possível extrair a variação percentual das porcentagens, isto é, $-50\%$.
+
+Supondo que a taxa de desocupação medida pela PNAD ou pela PME tenha sido de 8% e 5% nos mesmos dois meses, não seria válido comparar a queda de $8 - 5 = 3$ pontos percentuais com a de $50\%$ calculada para a série de buscas no Google. O correto seria comparar com a variação percentual, ou seja, $(5 - 8)/8 = -0.375 = -37.5\%$. No caso, a queda de 3 pontos percentuais é comparável à de 0.25 pontos percentuais, mas esse último dado não poderia ser extraído do Google. 
+
+### Correlações e Gráficos
+
+```{r}
+conn <- connect()
+
+##-- Brasil: Categorias
+br.catg <- get.series(conn,4,0)
+
+# Séries
+br.jobs <- br.catg$Jobs 
+br.list <- br.catg$`Job Listings`
+pnad <- get.pnad(conn)
+
+# Transformações
+l.br.jobs <- window(log.ret(ma3(br.jobs)),end=c(2018,3))
+l.br.list <- window(log.ret(ma3(br.list)),end=c(2018,3))
+l.pnad <- window(log.ret(pnad),start=c(2004,4))
+
+# Gráficos
+par(mfrow = c(2,1), mar=c(2,4,2,4))
+plot.gt(l.br.jobs, l.pnad, c("Cat: Jobs","PNAD"))
+plot.gt(l.br.list, l.pnad, c("Cat: Jobs Listings","PNAD"))
+```
+
+```{r}
+pme <- get.pme(conn)
+l.pme <- window(log.ret(pme),start=c(2004,4))
+l.br.jobs <- window(l.br.jobs, end=c(2016,2))
+l.br.list <- window(l.br.list, end=c(2016,2))
+
+par(mfrow = c(2,1), mar=c(2,4,2,4))
+plot.gt(l.br.jobs, l.pme, c("Cat: Jobs","PME"))
+plot.gt(l.br.list, l.pme, c("Cat: Jobs Listings","PME"))
+```
+
+```{r}
+## -- Brasil: Termos relacionados
+br.rltd <- get.series(conn,2,0)
+names(br.rltd)
+
+l.br.rltd1 <- window(log.ret(ma3(br.rltd$vagas)),end=c(2018,3))
+l.br.rltd2  <- window(log.ret(ma3(br.rltd$emprego)),end=c(2018,3))
+l.br.rltd3  <- window(log.ret(ma3(br.rltd$catho)),end=c(2018,3))
+l.br.rltd4  <- window(log.ret(ma3(br.rltd$`vaga de emprego`)),end=c(2018,3))
+
+par(mfrow = c(2,2), mar=c(2,2,2,0.5))
+plot.gt(l.br.rltd1, l.pnad, c("Term: 'vagas'", "PNAD"), title = "Term: 'vagas'", y2 = F)
+plot.gt(l.br.rltd2, l.pnad, c("Term: 'emprego'", "PNAD"), title = "Term: 'emprego'", y2 = F)
+plot.gt(l.br.rltd3, l.pnad, c("Term: 'catho'", "PNAD"), title = "Term: 'catho'", y2 = F)
+plot.gt(l.br.rltd1, l.pnad, c("Term: 'vaga de emprego'", "PNAD"), title = "Term: 'vaga de emprego'", y2 = F)
+```
+
+```{r}
+## -- Brasil: Termos gerados
+br.gnrt <- get.series(conn,1,0)
+names(br.gnrt)
+
+l.br.gnrt1 <- window(log.ret(ma3(br.gnrt$`procura-se emprego`)),end=c(2018,3))
+l.br.gnrt2  <- window(log.ret(ma3(br.gnrt$`preciso de um trabalho`)),end=c(2018,3))
+l.br.gnrt3  <- window(log.ret(ma3(br.gnrt$`buscando emprego`)),end=c(2018,3))
+l.br.gnrt4  <- window(log.ret(ma3(br.gnrt$`quero trabalho`)),end=c(2018,3))
+
+par(mfrow = c(2,2), mar=c(2,3.8,2,2))
+plot.gt(l.br.gnrt1, l.pnad, c("Term", "PNAD"), title = "Term: 'procura-se emprego'", y2 = T, sec.ylab = F)
+plot.gt(l.br.gnrt2, l.pnad, c("Term", "PNAD"), title = "Term: 'preciso de um trabalho'", y2 = T, sec.ylab = F)
+plot.gt(l.br.gnrt3, l.pnad, c("Term", "PNAD"), title = "Term: 'buscando emprego'", y2 = T, sec.ylab = F)
+plot.gt(l.br.gnrt4, l.pnad, c("Term", "PNAD"), title = "Term: 'quero trabalho'", y2 = T, sec.ylab = F)
+```
+
+```{r tidy=T}
+# Categorias por regioes
+ne.catg <- get.series(conn,4,29)
+se.catg <- get.series(conn,4,30)
+n.catg <- get.series(conn,4,31)
+s.catg <- get.series(conn,4,32)
+co.catg <- get.series(conn,4,33)
+
+# PNAD
+ne.pnad <- log.ret(get.pnad(conn,29,"t"))
+se.pnad <- log.ret(get.pnad(conn,30,"t"))
+n.pnad <- log.ret(get.pnad(conn,31,"t"))
+s.pnad <- log.ret(get.pnad(conn,32,"t"))
+co.pnad <-log.ret( get.pnad(conn,33,"t"))
+
+# Job Listings
+ne.list <- log.ret(window(quarterly(ne.catg$`Job Listings`),start=c(2012,1),end=c(2018,1)))
+se.list <- log.ret(window(quarterly(se.catg$`Job Listings`),start=c(2012,1),end=c(2018,1)))
+n.list <- log.ret(window(quarterly(n.catg$`Job Listings`),start=c(2012,1),end=c(2018,1)))
+s.list <- log.ret(window(quarterly(s.catg$`Job Listings`),start=c(2012,1),end=c(2018,1)))
+co.list <- log.ret(window(quarterly(co.catg$`Job Listings`),start=c(2012,1),end=c(2018,1)))
+
+par(mfrow = c(5,1), mar=c(2,2,1.5,1))
+lims <- c(-0.35,0.35)
+plot.gt(ne.list, ne.pnad, c("Cat: Job Listings", "PNAD"), title = "Northeast: Job Listings", y2 = F, ylim = lims)
+plot.gt(se.list, se.pnad, c("Cat: Job Listings", "PNAD"), title = "Southeast: Job Listings", y2 = F, ylim = lims)
+plot.gt(n.list, n.pnad, c("Cat: Job Listings", "PNAD"), title = "North: Job Listings", y2 = F, ylim = lims)
+plot.gt(s.list, s.pnad, c("Cat: Job Listings", "PNAD"), title = "South: Job Listings'", y2 = F, ylim = lims)
+plot.gt(co.list, co.pnad, c("Cat: Job Listings", "PNAD"), title = "Central-West: Job Listings", y2 = F, ylim = lims)
+```
+
+[^1]: O tópico tratado pode ser encontrado [neste link](https://support.google.com/trends/answer/4365533?hl=en&ref_topic=6248052).
+
+## Propostas de Modelo
